@@ -1,0 +1,37 @@
+const FILES=['morning','afternoon','evening','hello','intro','ready','pull','reload','result','outof',...Array.from({length:25},(_,i)=>`score-${i}`)];
+const TEXT={morning:'Good morning.',afternoon:'Good afternoon.',evening:'Good evening.',hello:'Hello.',intro:'Welcome to the Clay Pigeon Shooting Competition. There will be a total of 24 targets per contestant. I will command the release of the clays at 10 second intervals. The projectiles you are using are guided, so only an initial targeting is required. However you only get one shot per clay. So make it count.',ready:'Are you ready?',pull:'Pull!',reload:'Reload.'};
+export function greeting(hour=new Date().getHours()){return hour>=5&&hour<12?'morning':hour>=12&&hour<18?'afternoon':hour>=18&&hour<22?'evening':'hello';}
+export class JenniferCaller{
+ constructor({release,canRelease,remaining,message,changed,beforePull=()=>{},voiceEnabled=()=>true,needsReload=()=>true,reload=()=>{},aimReady=()=>{},endTurn=()=>{},score=()=>0,settled=()=>true,makeContext=()=>new(window.AudioContext||window.webkitAudioContext)(),fetchAudio=async name=>{const r=await fetch(`jennifer-${name}.mp3?v=${name==='intro'?'clay-23':'clay-18'}`);if(!r.ok)throw Error('Jennifer recording unavailable.');return r.arrayBuffer();},raf=fn=>requestAnimationFrame(fn),caf=id=>cancelAnimationFrame(id)}){Object.assign(this,{release,canRelease,remaining,message,changed,beforePull,voiceEnabled,needsReload,reload,aimReady,endTurn,score,settled,makeContext,fetchAudio,raf,caf});this.ctx=null;this.introduced=false;this.started=false;this.completed=false;this.completedRounds=0;this.busy=false;this.token=0;this.sources=[];this.frame=null;this.buffers=null;this.lastRelease=null;document.addEventListener('visibilitychange',()=>{if(document.hidden)this.cancel();});}
+ syncVoice(){if(this.speechGain)this.speechGain.gain.value=this.voiceEnabled()?1:0;}
+ async load(){if(this.buffers)return this.buffers;if(!this.loading)this.loading=Promise.all(FILES.map(async name=>{try{return [name,await this.ctx.decodeAudioData(await this.fetchAudio(name))];}catch(e){throw Error(`${name}: ${e.message}`);}})).then(items=>{this.buffers=Object.fromEntries(items);return this.buffers;}).catch(e=>{this.loading=null;throw e;});return this.loading;}
+ play(parts,start){let time=start;const cues=[];for(const part of parts){if(typeof part==='number'){time+=part;continue;}const source=this.ctx.createBufferSource();source.buffer=this.buffers[part];source.connect(this.speechGain);source.start(time);source.onended=()=>{source.disconnect();this.sources=this.sources.filter(s=>s!==source);};this.sources.push(source);cues.push({time,part,text:TEXT[part]});time+=this.buffers[part].duration;}return {parts,cues,endTime:time};}
+ async request(){if(this.busy||this.completed||(!this.canRelease()&&!this.introduced))return false;const token=++this.token;this.busy=true;this.started=true;this.changed();this.message('Preparing round…');try{
+ if(!this.ctx){this.ctx=this.makeContext();this.speechGain=this.ctx.createGain();this.speechGain.connect(this.ctx.destination);}await this.ctx.resume();this.syncVoice();await this.load();if(token!==this.token)return false;if(this.ctx.state!=='running')throw Error('Audio is not enabled.');
+ const queue=(parts,start,full=false)=>{const call=this.play(parts,start),pull=call.cues.find(c=>c.part==='pull');return {...call,releaseTime:call.endTime+(pull?.05:0),pullStart:pull?.time??call.endTime,pullEnd:call.endTime,full};};
+ const full=!this.introduced;let cycle=this.remaining()>0?queue(this.voiceEnabled()?(full?(this.completedRounds>0?['ready',3,'pull']:[greeting(),'intro',3,'ready',3,'pull']):['pull']):[3],this.ctx.currentTime+.05,full):{releaseTime:this.lastRelease??this.ctx.currentTime,cues:[],parts:[],endTime:this.ctx.currentTime};
+ let released=this.remaining()<=0,lastCue=-1,reloaded=false,turnEnded=false,next=null,result=null;this.schedule=cycle;
+ const finish=()=>{this.busy=false;this.frame=null;this.schedule=null;this.changed();};
+ const tick=()=>{if(token!==this.token)return;const now=this.ctx.currentTime;if(document.hidden){this.cancel();return;}if(this.ctx.state!=='running'){this.frame=this.raf(tick);return;}
+ for(let i=lastCue+1;i<cycle.cues.length;i++)if(now>=cycle.cues[i].time){this.message(cycle.cues[i].text);if(cycle.cues[i].part==='pull')this.beforePull();lastCue=i;}
+ if(!released&&now>=cycle.releaseTime){if(!this.canRelease()){finish();return;}if(!this.release()){this.cancel();return;}released=true;this.lastRelease=cycle.releaseTime;this.introduced=true;}
+ if(released){
+ // Schedule on the audio clock so Reload starts precisely seven seconds after release.
+ if(!reloaded&&this.remaining()>0&&this.needsReload()){if(now>=cycle.releaseTime+10){cycle.reloadTime=cycle.releaseTime+7;}else{const cue=this.play(['reload'],Math.max(cycle.releaseTime+7,now+.01));cycle.reloadTime=cue.cues[0].time;}cycle.reloadEnd=cycle.reloadTime+this.buffers.reload.duration;reloaded=true;}
+ if(now>=cycle.reloadTime&&!cycle.reloadCalled){cycle.reloadCalled=true;this.reload();this.message(TEXT.reload);}
+ const readyTime=this.voiceEnabled()&&cycle.reloadEnd?cycle.reloadEnd+.05:cycle.releaseTime+7;
+ if(this.remaining()>0&&!cycle.aimPrepared&&now>=readyTime){cycle.aimPrepared=true;this.aimReady();}
+ // The next Pull starts ten seconds after this clay was released; launch follows the word.
+ if(this.remaining()>0&&!next){next=queue(this.voiceEnabled()?['pull']:[],Math.max(cycle.releaseTime+10,now+.05));cycle.nextPullStart=next.pullStart;}
+ if(now>=cycle.releaseTime+10&&!turnEnded){turnEnded=true;this.endTurn();}
+ if(next&&now>=next.pullStart){cycle=next;next=null;released=false;lastCue=-1;reloaded=false;turnEnded=false;this.schedule=cycle;}
+ else if(this.remaining()<=0&&turnEnded&&this.settled()){
+ if(!result){const n=Math.max(0,Math.min(24,Math.round(this.score())));result=this.play(this.voiceEnabled()?['result',.08,`score-${n}`,.08,'outof']:[],now+.05);this.message(`That was the last clay. You scored ${n} out of 24.`);}
+ if(now>=result.endTime){this.completed=true;this.completedRounds++;finish();return;}
+ }
+ }this.frame=this.raf(tick);};this.frame=this.raf(tick);return true;
+ }catch(e){if(token!==this.token)return false;this.cancel();this.message('Voice unavailable. Try again.');console.warn('Jennifer audio:',e.message);return false;}}
+ effect(kind){const ctx=this.ctx;if(!ctx||ctx.state!=='running')return false;const gun=kind==='gun',length=gun?.24:.65,buffer=ctx.createBuffer(1,Math.ceil(ctx.sampleRate*length),ctx.sampleRate),data=buffer.getChannelData(0);let low=0;for(let i=0;i<data.length;i++){const t=i/ctx.sampleRate;low=.8*low+.2*(Math.random()*2-1);data[i]=(gun?(Math.random()*2-1)*Math.exp(-t*35)+.5*Math.sin(2*Math.PI*(110*t-100*t*t))*Math.exp(-t*20):low*Math.exp(-t*7)+.3*(Math.random()*2-1)*Math.exp(-t*16)*Math.pow(Math.max(0,Math.sin(t*190)),8))*.65;}const source=ctx.createBufferSource();source.buffer=buffer;source.connect(ctx.destination);this.sources.push(source);source.onended=()=>{source.disconnect();this.sources=this.sources.filter(s=>s!==source);};source.start();return true;}
+ cancel(){++this.token;if(this.frame!==null)this.caf(this.frame);this.frame=null;for(const s of this.sources){try{s.stop();s.disconnect();}catch{}}this.sources=[];this.busy=false;this.schedule=null;this.changed();}
+ reset(){this.cancel();this.started=false;this.introduced=false;this.completed=false;this.lastRelease=null;this.changed();}
+}
