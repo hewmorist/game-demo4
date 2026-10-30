@@ -1,4 +1,4 @@
-import {ClayGame} from './clay.js?v=clay-32';
+import {ClayGame} from './clay.js?v=clay-33';
 const gameMode=!new URLSearchParams(location.search).has('lab');let game;
 import {FacetObject,installFacetUI} from './facets.js?v=multi-11';
 import {personPoint,Person18} from './person18.js?v=multi-11';
@@ -8,7 +8,7 @@ import {wirePlatonic} from './platonic.js?v=multi-11';
 import {makeLobeform,LobeformSkin,lobeformCarrier,lobeformField} from './lobeform.js?v=multi-11';
 import {InertStructure} from './inert.js?v=multi-11';
 import {createSoundtrack} from './soundtrack.js?v=multi-11';
-import {GravityGPU,CAPACITY} from './gpu.js?v=clay-32';
+import {GravityGPU,CAPACITY} from './gpu.js?v=clay-33';
 import {createTimeline} from './timeline.js?v=multi-11';
 import {wireSphere,wireBeing,wireBust,wireCell,ringCloud,inertCloud} from './mesh.js?v=multi-11';
 let timeline,multi,applyFacetPlacement=()=>{};
